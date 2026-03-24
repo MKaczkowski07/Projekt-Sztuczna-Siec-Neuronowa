@@ -7,6 +7,7 @@ class DataPreprocessing:
         self.target_col = target_col
         self.drop_cols = drop_cols if drop_cols is not None else ['Id']
         self.data = None
+        self.y_max = None
 
     def load_data(self):
         self.data = pd.read_csv(self.train_path)
@@ -38,9 +39,15 @@ class DataPreprocessing:
             if std_val != 0:
                 self.data[col] = (self.data[col] - mean_val) / std_val
 
+        self.y_max = self.data[self.target_col].max()
+        self.data[self.target_col] = self.data[self.target_col] / self.y_max
+
+    def inverse_transform_target(self, y_scaled):
+        if self.y_max is None:
+            raise ValueError("Dane nie zostały jeszcze przeskalowane.")
+        return y_scaled * self.y_max
+
     def get_processed_data(self, test_size: float = 0.2):
-        """
-        """
         self.load_data()
         self.handle_missing_values()
         self.encode_categorical()
@@ -62,4 +69,4 @@ class DataPreprocessing:
         x_train, x_val = x_data[train_idx], x_data[val_idx]
         y_train, y_val = y_data[train_idx], y_data[val_idx]
 
-        return x_train, x_val, y_train, y_val
+        return x_train.T, x_val.T, y_train.T, y_val.T
