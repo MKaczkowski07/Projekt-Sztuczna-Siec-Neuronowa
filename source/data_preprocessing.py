@@ -15,32 +15,8 @@ class DataPreprocessing:
         if existing_drop_cols:
             self.data.drop(columns=existing_drop_cols, inplace=True)
 
-    def handle_missing_values(self):
-        num_cols = self.data.select_dtypes(include=['number']).columns
-        cat_cols = self.data.select_dtypes(exclude=['number']).columns
-
-        for col in num_cols:
-            mean_val = self.data[col].mean()
-            self.data[col] = self.data[col].fillna(mean_val)
-
-        for col in cat_cols:
-            self.data[col] = self.data[col].fillna('None')
-
     def encode_categorical(self):
         self.data = pd.get_dummies(self.data, drop_first=True)
-
-    def scale_features(self):
-        features = [col for col in self.data.columns if col != self.target_col]
-
-        for col in features:
-            mean_val = self.data[col].mean()
-            std_val = self.data[col].std()
-
-            if std_val != 0:
-                self.data[col] = (self.data[col] - mean_val) / std_val
-
-        self.y_max = self.data[self.target_col].max()
-        self.data[self.target_col] = self.data[self.target_col] / self.y_max
 
     def inverse_transform_target(self, y_scaled):
         if self.y_max is None:
@@ -49,24 +25,42 @@ class DataPreprocessing:
 
     def get_processed_data(self, test_size: float = 0.2):
         self.load_data()
-        self.handle_missing_values()
         self.encode_categorical()
-        self.scale_features()
 
         if self.target_col not in self.data.columns:
             raise ValueError(f"Kolumna docelowa '{self.target_col}' nie istnieje w danych.")
 
-        x_data = self.data.drop(columns=[self.target_col]).values.astype(np.float32)
-        y_data = self.data[self.target_col].values.astype(np.float32).reshape(-1, 1)
-
         np.random.seed(42)
-        indices = np.random.permutation(len(x_data))
-        val_size = int(len(x_data) * test_size)
+        indices = np.random.permutation(len(self.data))
+        val_size = int(len(self.data) * test_size)
 
-        val_idx = indices[:val_size]
-        train_idx = indices[val_size:]
+        train_idx, val_idx = indices[val_size:], indices[:val_size]
 
-        x_train, x_val = x_data[train_idx], x_data[val_idx]
-        y_train, y_val = y_data[train_idx], y_data[val_idx]
+        train_df = self.data.iloc[train_idx].copy()
+        val_df = self.data.iloc[val_idx].copy()
+
+        num_cols = train_df.select_dtypes(include=['number']).columns
+        for col in num_cols:
+            mean_val = train_df[col].mean()
+            train_df[col] = train_df[col].fillna(mean_val)
+            val_df[col] = val_df[col].fillna(mean_val)
+
+        features = [col for col in train_df.columns if col != self.target_col]
+        for col in features:
+            mean_val = train_df[col].mean()
+            std_val = train_df[col].std()
+            if std_val != 0:
+                train_df[col] = (train_df[col] - mean_val) / std_val
+                val_df[col] = (val_df[col] - mean_val) / std_val
+
+        self.y_max = train_df[self.target_col].max()
+        train_df[self.target_col] = train_df[self.target_col] / self.y_max
+        val_df[self.target_col] = val_df[self.target_col] / self.y_max
+
+        x_train = train_df.drop(columns=[self.target_col]).values.astype(np.float32)
+        y_train = train_df[self.target_col].values.astype(np.float32).reshape(-1, 1)
+
+        x_val = val_df.drop(columns=[self.target_col]).values.astype(np.float32)
+        y_val = val_df[self.target_col].values.astype(np.float32).reshape(-1, 1)
 
         return x_train.T, x_val.T, y_train.T, y_val.T
