@@ -1,8 +1,10 @@
 import numpy as np
 
+
 class NeuralNetwork:
-    def __init__(self, input_size, hidden_size, output_size=1, learning_rate=0.01):
+    def __init__(self, input_size, hidden_size, output_size=1, learning_rate=0.01, task_type='regression'):
         self.learning_rate = learning_rate
+        self.task_type = task_type
         self.cache = {}
 
         self.parameters = {
@@ -18,23 +20,43 @@ class NeuralNetwork:
     def relu_derivative(self, Z):
         return (Z > 0).astype(float)
 
+    def sigmoid(self, Z):
+        Z = np.clip(Z, -500, 500)
+        return 1 / (1 + np.exp(-Z))
+
     def forward_propagation(self, X):
         W1, b1 = self.parameters['W1'], self.parameters['b1']
         W2, b2 = self.parameters['W2'], self.parameters['b2']
 
+        # Warstwa ukryta
         Z1 = np.dot(W1, X) + b1
         A1 = self.relu(Z1)
 
+        # Warstwa wyjściowa
         Z2 = np.dot(W2, A1) + b2
-        A2 = Z2
+
+        # PRZEŁĄCZNIK TRYBÓW
+        if self.task_type == 'classification':
+            A2 = self.sigmoid(Z2)
+        else:
+            A2 = Z2
 
         self.cache = {'Z1': Z1, 'A1': A1, 'Z2': Z2, 'A2': A2}
         return A2
 
     def compute_loss(self, Y, Y_pred):
         m = Y.shape[1]
-        loss = (1 / (2 * m)) * np.sum(np.square(Y_pred - Y))
-        return loss
+
+        if self.task_type == 'classification':
+            # Binary Cross-Entropy
+            epsilon = 1e-15
+            Y_pred = np.clip(Y_pred, epsilon, 1 - epsilon)
+            loss = -(1 / m) * np.sum(Y * np.log(Y_pred) + (1 - Y) * np.log(1 - Y_pred))
+        else:
+            # Mean Squared Error
+            loss = (1 / (2 * m)) * np.sum(np.square(Y_pred - Y))
+
+        return float(np.squeeze(loss))
 
     def backward_propagation(self, X, Y):
         m = X.shape[1]
@@ -61,15 +83,12 @@ class NeuralNetwork:
     def train(self, X_train, Y_train, epochs, print_cost=True):
         for i in range(epochs):
             Y_pred = self.forward_propagation(X_train)
-
             loss = self.compute_loss(Y_train, Y_pred)
-
             gradients = self.backward_propagation(X_train, Y_train)
-
             self.update_parameters(gradients)
 
             if print_cost and i % 100 == 0:
-                print(f"Epoka {i}, Błąd (MSE): {loss:.4f}")
+                print(f"Epoka {i}, Błąd: {loss:.4f}")
 
     def predict(self, X):
         return self.forward_propagation(X)
