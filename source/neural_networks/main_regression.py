@@ -61,7 +61,7 @@ def test_parameter(param_name, values_to_test, train_path, repeats=3, **defaults
 
 
 def main():
-    train_path = '../data/housing/train.csv'
+    train_path = '../../data/housing/train.csv'
 
     defaults = {
         'test_size': 0.2,
