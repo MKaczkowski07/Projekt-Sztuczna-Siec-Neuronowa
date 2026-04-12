@@ -10,6 +10,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.metrics import mean_squared_error
+from sklearn.svm import SVR
 
 
 def test_ml_parameter(model_name, model_class, param_name, values_to_test, train_path, **default_params):
@@ -31,7 +32,7 @@ def test_ml_parameter(model_name, model_class, param_name, values_to_test, train
         current_params = default_params.copy()
         current_params[param_name] = val
 
-        if model_name != 'k-NN':
+        if model_name not in ['k-NN', 'SVR']:
             current_params['random_state'] = 42
 
         model = model_class(**current_params)
@@ -72,6 +73,9 @@ def main():
 
     # 3. Metoda: k-Najbliższych Sąsiadów (k-NN)
     test_ml_parameter('k-NN', KNeighborsRegressor, 'n_neighbors', [3, 5, 10, 15], train_path)
+
+    # 4. Metoda: Support Vector Regressor (SVR)
+    test_ml_parameter('SVR', SVR, 'kernel', ['linear', 'poly', 'rbf', 'sigmoid'], train_path)
 
 
 if __name__ == "__main__":
