@@ -9,73 +9,101 @@ from neural_networks.data_preprocessing_reg import DataPreprocessing
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.tree import DecisionTreeRegressor
-from sklearn.metrics import mean_squared_error
 from sklearn.svm import SVR
+from sklearn.model_selection import GridSearchCV
 
 
-def test_ml_parameter(model_name, model_class, param_name, values_to_test, train_path, **default_params):
-    print(f"\n{'=' * 70}")
-    print(f"Badanie metody: {model_name} | Parametr: {param_name}")
-    print(f"{'=' * 70}")
+def run_grid_search(model_name, estimator, param_grid, X, y, preprocessor):
+    print(f"\n{'=' * 80}")
+    print(f"Optymalizacja siatkowa (GridSearchCV) dla: {model_name}")
+    print(f"{'=' * 80}")
 
-    results = []
+    grid_search = GridSearchCV(
+        estimator=estimator,
+        param_grid=param_grid,
+        cv=5,
+        scoring='neg_root_mean_squared_error',
+        return_train_score=True,
+        n_jobs=-1
+    )
 
-    preprocessor = DataPreprocessing(train_path=train_path)
-    X_train_T, X_val_T, y_train_T, y_val_T = preprocessor.get_processed_data(test_size=0.2)
+    print("Rozpoczęto przeszukiwanie siatki. To może chwilę potrwać...")
+    grid_search.fit(X, y)
+    print("Zakończono optymalizację.\n")
 
-    X_train, X_val = X_train_T.T, X_val_T.T
-    y_train, y_val = y_train_T.T.ravel(), y_val_T.T.ravel()
+    results = pd.DataFrame(grid_search.cv_results_)
 
-    for val in values_to_test:
-        print(f"Testowanie {param_name} = {val}...", end=" ")
+    results = results.sort_values(by='rank_test_score').head(5)
 
-        current_params = default_params.copy()
-        current_params[param_name] = val
+    output_data = []
+    for index, row in results.iterrows():
+        train_rmse_scaled = abs(row['mean_train_score'])
+        val_rmse_scaled = abs(row['mean_test_score'])
 
-        if model_name not in ['k-NN', 'SVR']:
-            current_params['random_state'] = 42
+        train_rmse_usd = preprocessor.inverse_transform_target(train_rmse_scaled)
+        val_rmse_usd = preprocessor.inverse_transform_target(val_rmse_scaled)
 
-        model = model_class(**current_params)
-        model.fit(X_train, y_train)
+        overfitting_usd = val_rmse_usd - train_rmse_usd
 
-        y_train_pred = model.predict(X_train)
-        y_val_pred = model.predict(X_val)
+        row_dict = {}
+        for param in param_grid.keys():
+            row_dict[param] = row[f'param_{param}']
 
-        train_loss = mean_squared_error(y_train, y_train_pred)
-        val_loss = mean_squared_error(y_val, y_val_pred)
+        row_dict['Uczący (USD)'] = round(train_rmse_usd, 2)
+        row_dict['Walidacja (USD)'] = round(val_rmse_usd, 2)
+        row_dict['Przeuczenie (USD)'] = round(overfitting_usd, 2)
+        row_dict['Miejsce'] = row['rank_test_score']
 
-        train_rmse = preprocessor.inverse_transform_target(np.sqrt(train_loss))
-        val_rmse = preprocessor.inverse_transform_target(np.sqrt(val_loss))
+        output_data.append(row_dict)
 
-        print("Zakończono.")
-        results.append({
-            "Wartość": val,
-            "Błąd Uczący (USD)": round(train_rmse, 2),
-            "Błąd Testowy (USD)": round(val_rmse, 2),
-            "Przeuczenie (Różnica)": round(val_rmse - train_rmse, 2)
-        })
-
-    df_results = pd.DataFrame(results)
-    print("\n" + df_results.to_string(index=False) + "\n")
+    df_output = pd.DataFrame(output_data)
+    print(df_output.to_string(index=False) + "\n")
 
 
 def main():
     train_path = '../../data/housing/train.csv'
 
-    print("Rozpoczynam badanie gotowych modeli ML dla Regresji (Ames Housing)...")
-    print("Ze względu na gotowe algorytmy, uczymy tylko raz (są deterministyczne).")
+    print("Pobieranie i przetwarzanie danych...")
+    preprocessor = DataPreprocessing(train_path=train_path)
 
+    X_train_T, X_val_T, y_train_T, y_val_T = preprocessor.get_processed_data(test_size=0.2)
 
-    # 1. Metoda: Random Forest
-    test_ml_parameter('Random Forest', RandomForestRegressor, 'n_estimators', [10, 50, 100, 200], train_path)
+    X_train = X_train_T.T
+    y_train = y_train_T.T.ravel()
+
+    print("\nRozpoczynam badanie modeli ML z wielowymiarową optymalizacją...")
+
+    # 1. Metoda: k-Najbliższych Sąsiadów (k-NN)
+    knn_grid = {
+        'n_neighbors': [3, 5, 10, 15],
+        'weights': ['uniform', 'distance'],
+        'p': [1, 2]  # 1: Manhattan, 2: Euclidean
+    }
+    run_grid_search('k-NN', KNeighborsRegressor(), knn_grid, X_train, y_train, preprocessor)
+
     # 2. Metoda: Drzewo Decyzyjne
-    test_ml_parameter('Decision Tree', DecisionTreeRegressor, 'max_depth', [5, 10, 20, None], train_path)
+    dt_grid = {
+        'max_depth': [3, 5, 10, 20],
+        'min_samples_split': [2, 5, 10],
+        'criterion': ['squared_error', 'absolute_error']
+    }
+    run_grid_search('Decision Tree', DecisionTreeRegressor(random_state=42), dt_grid, X_train, y_train, preprocessor)
 
-    # 3. Metoda: k-Najbliższych Sąsiadów (k-NN)
-    test_ml_parameter('k-NN', KNeighborsRegressor, 'n_neighbors', [3, 5, 10, 15], train_path)
+    # 3. Metoda: Random Forest
+    rf_grid = {
+        'n_estimators': [50, 100, 200],
+        'max_depth': [10, 20, None],
+        'min_samples_split': [2, 5]
+    }
+    run_grid_search('Random Forest', RandomForestRegressor(random_state=42), rf_grid, X_train, y_train, preprocessor)
 
     # 4. Metoda: Support Vector Regressor (SVR)
-    test_ml_parameter('SVR', SVR, 'kernel', ['linear', 'poly', 'rbf', 'sigmoid'], train_path)
+    svr_grid = {
+        'kernel': ['linear', 'poly', 'rbf'],
+        'C': [0.1, 1.0, 10.0, 100.0],
+        'gamma': ['scale', 'auto']
+    }
+    run_grid_search('SVR', SVR(), svr_grid, X_train, y_train, preprocessor)
 
 
 if __name__ == "__main__":
