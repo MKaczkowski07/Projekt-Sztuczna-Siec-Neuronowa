@@ -4,81 +4,111 @@ import sys
 import os
 import warnings
 
+from sklearn.model_selection import GridSearchCV
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+
 warnings.filterwarnings('ignore')
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from neural_networks.data_preprocessing_cls import TitanicPreprocessing
 
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score
 
-def test_ml_model(model_class, param_name, values_to_test, train_path, repeats=3, **fixed_params):
-    print(f"\n{'=' * 65}")
-    print(f"Badanie algorytmu: {model_class.__name__} | Parametr: {param_name.upper()}")
-    print(f"{'=' * 65}\n")
+def tune_and_test_model(model_class, param_grid, train_path):
+    print(f"\n{'=' * 85}")
+    print(f"Optymalizacja hiperparametrów: {model_class.__name__}")
+    print(f"{'=' * 85}")
 
-    results = []
+    preprocessor = TitanicPreprocessing(data_path=train_path)
+    X_train_nn, X_test_nn, y_train_nn, y_test_nn = preprocessor.get_processed_data(test_size=0.2)
 
-    for val in values_to_test:
-        print(f"| Testowanie parametru {param_name}: {val} |")
-        train_accuracies = []
-        val_accuracies = []
+    X_train, X_test = X_train_nn.T, X_test_nn.T
+    y_train, y_test = y_train_nn.T.ravel(), y_test_nn.T.ravel()
 
-        for _ in range(repeats):
-            preprocessor = TitanicPreprocessing(data_path=train_path)
-            X_train_nn, X_val_nn, y_train_nn, y_val_nn = preprocessor.get_processed_data(test_size=0.2)
+    base_model = model_class()
 
-            X_train, X_val = X_train_nn.T, X_val_nn.T
-            y_train, y_val = y_train_nn.T.ravel(), y_val_nn.T.ravel()
+    grid_search = GridSearchCV(
+        estimator=base_model,
+        param_grid=param_grid,
+        cv=5,
+        scoring='accuracy',
+        n_jobs=-3,
+        return_train_score = True
+    )
 
-            current_params = fixed_params.copy()
-            current_params[param_name] = val
-            model = model_class(**current_params)
+    print("Przeszukiwanie siatki. Trenowanie i weryfikacja wszystkich kombinacji...\n")
 
-            model.fit(X_train, y_train)
+    grid_search.fit(X_train, y_train)
 
-            y_train_pred = model.predict(X_train)
-            y_val_pred = model.predict(X_val)
+    results_df = pd.DataFrame(grid_search.cv_results_)
+    params_cols = [col for col in results_df.columns if col.startswith('param_')]
+    cols_to_show = params_cols + ['mean_train_score', 'mean_test_score', 'rank_test_score']
 
-            train_acc = accuracy_score(y_train, y_train_pred) * 100
-            val_acc = accuracy_score(y_val, y_val_pred) * 100
+    top_results = results_df[cols_to_show].sort_values(by='rank_test_score').head(5).copy()
 
-            train_accuracies.append(train_acc)
-            val_accuracies.append(val_acc)
+    top_results['mean_train_score'] = round(top_results['mean_train_score'] * 100, 2)
+    top_results['mean_test_score'] = round(top_results['mean_test_score'] * 100, 2)
 
-        avg_train_acc = np.mean(train_accuracies)
-        avg_val_acc = np.mean(val_accuracies)
+    top_results['Przeuczenie (%)'] = round(top_results['mean_train_score'] - top_results['mean_test_score'], 2)
 
-        results.append({
-            "Wartość": str(val),
-            "Dokładność Uczący (%)": round(avg_train_acc, 2),
-            "Dokładność Testowy (%)": round(avg_val_acc, 2),
-            "Przeuczenie (Różnica)": round(avg_train_acc - avg_val_acc, 2)
-        })
+    rename_dict = {
+        'mean_train_score': 'Uczący (%)',
+        'mean_test_score': 'Walidacja (%)',
+        'rank_test_score': 'Miejsce'
+    }
+    for col in params_cols:
+        rename_dict[col] = col.replace('param_', '')
 
-    print(f"PODSUMOWANIE: {model_class.__name__} ({param_name.upper()})")
-    df_results = pd.DataFrame(results)
-    print(df_results.to_string(index=False))
+    top_results.rename(columns=rename_dict, inplace=True)
+
+    kolumny = list(top_results.columns)
+    kolumny.remove('Miejsce')
+    kolumny.append('Miejsce')
+    top_results = top_results[kolumny]
+
+    print(f"--- 5 NAJLEPSZYCH KOMBINACJI ({model_class.__name__}) ---")
+    print(top_results.to_string(index=False))
+    print("-" * 85 + "\n")
+
 
 def main():
     train_path = '../../data/titanic/train.csv'
+    print("Rozpoczynam zautomatyzowane strojenie algorytmów...")
 
-    print("Rozpoczynam testowanie 4 algorytmów Uczenia Maszynowego dla Titanica...")
+    # 1. Siatka dla KNN
+    knn_grid = {
+        'n_neighbors': [3, 5, 7, 10, 15],
+        'weights': ['uniform', 'distance'],
+        'p': [1, 2]
+    }
+    tune_and_test_model(KNeighborsClassifier, knn_grid, train_path)
 
-    # 1. K-Najbliższych Sąsiadów (Badamy liczbę sąsiadów)
-    test_ml_model(KNeighborsClassifier, 'n_neighbors', [3, 5, 10, 20], train_path)
+    # 2. Siatka dla Drzewa Decyzyjnego
+    tree_grid = {
+        'max_depth': [3, 5, 10, 15, None],
+        'min_samples_split': [2, 5, 10],
+        'criterion': ['gini', 'entropy']
+    }
+    tune_and_test_model(DecisionTreeClassifier, tree_grid, train_path)
 
-    # 2. Drzewa Decyzyjne (Badamy maksymalną głębokość drzewa)
-    test_ml_model(DecisionTreeClassifier, 'max_depth', [3, 5, 10, None], train_path)
+    # 3. Siatka dla Lasu Losowego
+    rf_grid = {
+        'n_estimators': [50, 100, 200],
+        'max_depth': [5, 10, None],
+        'min_samples_split': [2, 5]
+    }
+    tune_and_test_model(RandomForestClassifier, rf_grid, train_path)
 
-    # 3. Lasy Losowe (Badamy liczbę drzew w lesie)
-    test_ml_model(RandomForestClassifier, 'n_estimators', [10, 50, 100, 200], train_path)
+    # 4. Siatka dla SVC
+    svc_grid = {
+        'kernel': ['linear', 'rbf'],
+        'C': [0.1, 1, 10],
+        'gamma': ['scale', 'auto']
+    }
+    tune_and_test_model(SVC, svc_grid, train_path)
 
-    # 4. Maszyny Wektorów Nośnych (Badamy rodzaj jądra krzywej)
-    test_ml_model(SVC, 'kernel', ['linear', 'poly', 'rbf', 'sigmoid'], train_path)
 
 if __name__ == "__main__":
     main()
